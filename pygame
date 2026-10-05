@@ -1,0 +1,288 @@
+import pygame
+import sys
+import random
+
+pygame.init()
+
+# Configuración básica
+TAM = 45
+ANCHO_CELDAS, ALTO_CELDAS = 13, 11
+ANCHO = ANCHO_CELDAS * TAM
+ALTO = ALTO_CELDAS * TAM + 50
+
+VENTANA = pygame.display.set_mode((ANCHO, ALTO))
+pygame.display.set_caption("Juego Bomberman")
+RELOJ = pygame.time.Clock()
+
+FUENTE = pygame.font.SysFont("Arial", 18, bold=True)
+
+# Colores por Nivel (Mapas visualmente distintos)
+COLORES_NIVEL = {
+    1: {"piso": (40, 140, 50), "pared": (70, 70, 70), "bloque": (140, 80, 40)},   # Bosque
+    2: {"piso": (180, 140, 90), "pared": (90, 80, 70), "bloque": (200, 100, 50)}, # Desierto
+    3: {"piso": (30, 40, 60), "pared": (20, 20, 40), "bloque": (100, 50, 120)}    # Mazmorra
+}
+
+# 3 Personajes básicos
+PERSONAJES = [
+    {"nombre": "Rápido", "color": (0, 200, 255), "vel": 4, "vidas": 2},
+    {"nombre": "Resistente", "color": (200, 50, 200), "vel": 2, "vidas": 4},
+    {"nombre": "Balanceado", "color": (255, 160, 0), "vel": 3, "vidas": 3}
+]
+
+# Estructura del juego
+class Jugador:
+    def __init__(self, datos):
+        self.x = TAM + 5
+        self.y = TAM + 55
+        self.color = datos["color"]
+        self.vel = datos["vel"]
+        self.vidas = datos["vidas"]
+        self.invulnerable = 0
+
+    def mover(self, dx, dy, mapa):
+        nx = self.x + dx * self.vel
+        ny = self.y + dy * self.vel
+        
+        # Colisión simple usando rectángulos
+        rect = pygame.Rect(nx, ny, TAM - 10, TAM - 10)
+        colision = False
+
+        for fila in range(ALTO_CELDAS):
+            for col in range(ANCHO_CELDAS):
+                if mapa[fila][col] in [1, 2]: # Paredes o bloques
+                    r_bloque = pygame.Rect(col * TAM, fila * TAM + 50, TAM, TAM)
+                    if rect.colliderect(r_bloque):
+                        colision = True
+                        break
+
+        if not colision:
+            self.x = nx
+            self.y = ny
+
+    def dibujar(self, superficie):
+        # Efecto de parpadeo si recibió daño
+        if self.invulnerable % 4 < 2:
+            pygame.draw.rect(superficie, self.color, (self.x, self.y, TAM - 10, TAM - 10), border_radius=4)
+
+class Bomba:
+    def __init__(self, col, fila):
+        self.col = col
+        self.fila = fila
+        self.timer = 90 # 1.5 segundos a 60 FPS
+
+class Explosion:
+    def __init__(self, col, fila):
+        self.col = col
+        self.fila = fila
+        self.duracion = 15 # Duración del efecto en pantalla
+
+class Enemigo:
+    def __init__(self, col, fila, vel):
+        self.x = col * TAM + 5
+        self.y = fila * TAM + 55
+        self.vel = vel
+        self.dir_x = random.choice([-1, 1])
+        self.dir_y = random.choice([-1, 1])
+
+    def actualizar(self, mapa):
+        nx = self.x + self.dir_x * self.vel
+        ny = self.y + self.dir_y * self.vel
+        
+        rect = pygame.Rect(nx, ny, TAM - 10, TAM - 10)
+        colision = False
+
+        for f in range(ALTO_CELDAS):
+            for c in range(ANCHO_CELDAS):
+                if mapa[f][c] in [1, 2]:
+                    if rect.colliderect(pygame.Rect(c * TAM, f * TAM + 50, TAM, TAM)):
+                        colision = True
+                        break
+
+        if not colision:
+            self.x, self.y = nx, ny
+        else:
+            self.dir_x = random.choice([-1, 0, 1])
+            self.dir_y = random.choice([-1, 0, 1])
+
+# Crear la matriz del mapa según el nivel
+def cargar_mapa(nivel):
+    mapa = []
+    densidad = 0.2 + (nivel * 0.1) # Más bloques destructibles en niveles altos
+
+    for f in range(ALTO_CELDAS):
+        fila = []
+        for c in range(ANCHO_CELDAS):
+            # Paredes externas y columnas fijas
+            if f == 0 or f == ALTO_CELDAS-1 or c == 0 or c == ANCHO_CELDAS-1 or (f % 2 == 0 and c % 2 == 0):
+                fila.append(1)
+            elif (f <= 2 and c <= 2): # Esquina limpia para que el jugador inicie
+                fila.append(0)
+            elif random.random() < densidad:
+                fila.append(2) # Bloque destructible
+            else:
+                fila.append(0) # Camino libre
+        mapa.append(fila)
+    return mapa
+
+# Menú inicial de selección
+def menu():
+    pos = 0
+    while True:
+        VENTANA.fill((20, 20, 30))
+        txt = FUENTE.render("SELECCIONA TU PERSONAJE", True, (255, 255, 255))
+        VENTANA.blit(txt, (ANCHO // 2 - txt.get_width() // 2, 40))
+
+        for i, p in enumerate(PERSONAJES):
+            color_txt = (255, 255, 255) if i == pos else (120, 120, 120)
+            info = f"{'> ' if i == pos else '  '}{p['nombre']} - Vel: {p['vel']} | Vidas: {p['vidas']}"
+            t = FUENTE.render(info, True, color_txt)
+            VENTANA.blit(t, (60, 120 + i * 40))
+
+        pygame.display.flip()
+
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_UP and pos > 0: pos -= 1
+                if ev.key == pygame.K_DOWN and pos < len(PERSONAJES) - 1: pos += 1
+                if ev.key == pygame.K_RETURN: return PERSONAJES[pos]
+
+# Bucle principal
+def juego():
+    p_datos = menu()
+    jugador = Jugador(p_datos)
+    
+    nivel = 1
+    mapa = cargar_mapa(nivel)
+    bombas = []
+    explosiones = []
+    enemigos = [Enemigo(8, 8, 1 + nivel)]
+    efecto_rojo = 0
+
+    jugando = True
+    while jugando:
+        RELOJ.tick(60)
+
+        # 1. Eventos
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                jugando = False
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_SPACE:
+                # Poner bomba en la celda del jugador
+                c = int((jugador.x + (TAM - 10) // 2) // TAM)
+                f = int((jugador.y - 50 + (TAM - 10) // 2) // TAM)
+                if len(bombas) < 2:
+                    bombas.append(Bomba(c, f))
+
+        # 2. Controles de Movimiento
+        keys = pygame.key.get_pressed()
+        dx = (keys[pygame.K_RIGHT] or keys[pygame.K_d]) - (keys[pygame.K_LEFT] or keys[pygame.K_a])
+        dy = (keys[pygame.K_DOWN] or keys[pygame.K_s]) - (keys[pygame.K_UP] or keys[pygame.K_w])
+        jugador.mover(dx, dy, mapa)
+
+        # 3. Lógica de Bombas y Explosiones
+        for b in bombas[:]:
+            b.timer -= 1
+            if b.timer <= 0:
+                # Generar explosión en cruz
+                for dc, df in [(0,0), (1,0), (-1,0), (0,1), (0,-1)]:
+                    nc, nf = b.col + dc, b.fila + df
+                    if 0 <= nc < ANCHO_CELDAS and 0 <= nf < ALTO_CELDAS:
+                        if mapa[nf][nc] == 2:
+                            mapa[nf][nc] = 0 # Destruye bloque
+                        if mapa[nf][nc] != 1:
+                            explosiones.append(Explosion(nc, nf))
+                bombas.remove(b)
+
+        for ex in explosiones[:]:
+            ex.duracion -= 1
+            if ex.duracion <= 0:
+                explosiones.remove(ex)
+
+        # 4. Enemigos y Daño
+        if jugador.invulnerable > 0:
+            jugador.invulnerable -= 1
+
+        r_jugador = pygame.Rect(jugador.x, jugador.y, TAM - 10, TAM - 10)
+
+        for e in enemigos:
+            e.actualizar(mapa)
+            r_enemigo = pygame.Rect(e.x, e.y, TAM - 10, TAM - 10)
+            
+            # Daño por enemigo o fuego
+            if r_jugador.colliderect(r_enemigo) and jugador.invulnerable == 0:
+                jugador.vidas -= 1
+                jugador.invulnerable = 60 # 1 segundo invulnerable
+                efecto_rojo = 10 # Efecto en pantalla
+                jugador.x, jugador.y = TAM + 5, TAM + 55
+
+        if jugador.vidas <= 0:
+            jugando = False
+
+        # 5. Pasar de nivel (Llegar a la celda final)
+        c_actual = int(jugador.x // TAM)
+        f_actual = int((jugador.y - 50) // TAM)
+        if c_actual == ANCHO_CELDAS - 2 and f_actual == ALTO_CELDAS - 2:
+            if nivel < 3:
+                nivel += 1
+                mapa = cargar_mapa(nivel)
+                jugador.x, jugador.y = TAM + 5, TAM + 55
+                enemigos = [Enemigo(8, 6, 1 + nivel) for _ in range(nivel)]
+            else:
+                print("¡Juego completado!")
+                jugando = False
+
+        # 6. DIBUJAR TODO
+        paleta = COLORES_NIVEL[nivel]
+        VENTANA.fill((0, 0, 0))
+
+        # Dibujar Tablero/Mapa
+        for f in range(ALTO_CELDAS):
+            for c in range(ANCHO_CELDAS):
+                r = (c * TAM, f * TAM + 50, TAM, TAM)
+                if mapa[f][c] == 1:
+                    pygame.draw.rect(VENTANA, paleta["pared"], r)
+                elif mapa[f][c] == 2:
+                    pygame.draw.rect(VENTANA, paleta["bloque"], r)
+                    pygame.draw.rect(VENTANA, (0,0,0), r, 1) # Borde
+                else:
+                    pygame.draw.rect(VENTANA, paleta["piso"], r)
+
+        # Salida visible (Meta)
+        pygame.draw.rect(VENTANA, (255, 255, 255), ((ANCHO_CELDAS - 2) * TAM + 10, (ALTO_CELDAS - 2) * TAM + 60, TAM - 20, TAM - 20))
+
+        # Dibujar Bombas
+        for b in bombas:
+            pygame.draw.circle(VENTANA, (200, 30, 30), (b.col * TAM + TAM // 2, b.fila * TAM + 50 + TAM // 2), TAM // 3)
+
+        # Dibujar Explosiones (Efecto básico de destello)
+        for ex in explosiones:
+            r = (ex.col * TAM, ex.fila * TAM + 50, TAM, TAM)
+            pygame.draw.rect(VENTANA, (255, 200, 50), r)
+
+        # Dibujar Enemigos y Jugador
+        for e in enemigos:
+            pygame.draw.ellipse(VENTANA, (220, 40, 40), (e.x, e.y, TAM - 10, TAM - 10))
+        jugador.dibujar(VENTANA)
+
+        # Panel superior de estado
+        info_txt = FUENTE.render(f"NIVEL {nivel} | Vidas: {jugador.vidas} | Personaje: {p_datos['nombre']}", True, (255, 255, 255))
+        VENTANA.blit(info_txt, (15, 15))
+
+        # Efecto visual de daño (Pantalla se tiñe de rojo un instante)
+        if efecto_rojo > 0:
+            s = pygame.Surface((ANCHO, ALTO))
+            s.set_alpha(100)
+            s.fill((255, 0, 0))
+            VENTANA.blit(s, (0,0))
+            efecto_rojo -= 1
+
+        pygame.display.flip()
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    juego()
